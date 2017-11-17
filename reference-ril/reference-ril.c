@@ -37,7 +37,7 @@
 #include <cutils/sockets.h>
 #include <sys/system_properties.h>
 #include <termios.h>
-#include <system/qemu_pipe.h>
+#include <qemu_pipe.h>
 
 #include "ril.h"
 
@@ -606,8 +606,7 @@ static void requestOrSendDataCallList(RIL_Token *t)
             }
             responses[i].dnses = dnslist;
 
-            /* There is only on gateway in the emulator */
-            responses[i].gateways = "10.0.2.2";
+            responses[i].gateways = "10.0.2.2 fe80::2";
             responses[i].mtu = DEFAULT_MTU;
         }
         else {
@@ -803,9 +802,11 @@ static void requestGetCurrentCalls(void *data __unused, size_t datalen __unused,
     }
 
     return;
+#ifdef WORKAROUND_ERRONEOUS_ANSWER
 error:
     RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
     at_response_free(p_response);
+#endif
 }
 
 static void requestDial(void *data, size_t datalen __unused, RIL_Token t)
@@ -888,9 +889,13 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
     ATResponse *p_response = NULL;
     int err;
     char *line;
-    int count =0;
-    int numofElements=sizeof(RIL_SignalStrength_v6)/sizeof(int);
-    int response[numofElements];
+    int count = 0;
+    // Accept a response that is at least v6, and up to v10
+    int minNumOfElements=sizeof(RIL_SignalStrength_v6)/sizeof(int);
+    int maxNumOfElements=sizeof(RIL_SignalStrength_v10)/sizeof(int);
+    int response[maxNumOfElements];
+
+    memset(response, 0, sizeof(response));
 
     err = at_send_command_singleline("AT+CSQ", "+CSQ:", &p_response);
 
@@ -904,9 +909,9 @@ static void requestSignalStrength(void *data __unused, size_t datalen __unused, 
     err = at_tok_start(&line);
     if (err < 0) goto error;
 
-    for (count =0; count < numofElements; count ++) {
+    for (count = 0; count < maxNumOfElements; count++) {
         err = at_tok_nextint(&line, &(response[count]));
-        if (err < 0) goto error;
+        if (err < 0 && count < minNumOfElements) goto error;
     }
 
     RIL_onRequestComplete(t, RIL_E_SUCCESS, response, sizeof(response));
@@ -1075,12 +1080,6 @@ static void requestCdmaDeviceIdentity(int request __unused, void *data __unused,
 
     RIL_onRequestComplete(t, RIL_E_SUCCESS, responseStr, count*sizeof(char*));
     at_response_free(p_response);
-
-    return;
-error:
-    RLOGE("requestCdmaDeviceIdentity must never return an error when radio is on");
-    at_response_free(p_response);
-    RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
 }
 
 static void requestCdmaGetSubscriptionSource(int request __unused, void *data,
@@ -1169,11 +1168,6 @@ static void requestCdmaSubscription(int request __unused, void *data __unused,
     responseStr[3] = "8587777777"; // MIN
     responseStr[4] = "1"; // PRL Version
     RIL_onRequestComplete(t, RIL_E_SUCCESS, responseStr, count*sizeof(char*));
-
-    return;
-error:
-    RLOGE("requestRegistrationState must never return an error when radio is on");
-    RIL_onRequestComplete(t, RIL_E_GENERIC_FAILURE, NULL, 0);
 }
 
 static void requestCdmaGetRoamingPreference(int request __unused, void *data __unused,
